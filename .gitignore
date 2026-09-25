@@ -1,0 +1,26 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# --- 密钥（绝不入库）---
+.env
+*.env
+!.env.example
+.env.*
+secrets.json
+secrets*.json
+*密码书*
+
+# --- 运行产物 ---
+runs/
+output/
+out/
+*.log
+*.mp4
+*.whl
+.godot/
+.DS_Store
+Thumbs.db
