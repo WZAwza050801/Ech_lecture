@@ -55,3 +55,7 @@ pipeline2.py run <B站视频链接> --page N
 本项目与读书笔记、复刻作品集两条管线共享同一前处理合并段（只跑一次）：
 
 ![合并段](docs/flow-merged.svg)
+
+## API 配置
+
+本仓库用到哪些 Key、为什么选这些模型、在哪申请、怎么自检——见 [docs/API_SETUP.md](docs/API_SETUP.md)。密钥永不入库。
