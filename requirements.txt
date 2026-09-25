@@ -1,3 +1,2 @@
+# Ech_lecture 核心依赖（不含 ASR，ASR 建议独立环境，见 requirements-asr.txt）
 Pillow>=10,<13
-# Optional when running ASR in this same environment.
-faster-whisper>=1.1,<2
