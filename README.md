@@ -64,12 +64,6 @@ Ech_lecture 的必需 Key：**SILICONFLOW_API_KEY**。
 | 退出码 1 但 PDF 已生成 | needs_human_review 的设计行为 | 检查正文末尾的待人工复核标记 |
 | xelatex 编译失败 | tex 语法或包缺失 | 看同目录 .log，或 --prepare-only 只准备不调 API |
 
-### 跑起来
-
-```bash
-python pipeline2.py run <B站课程链接> --page N
-```
-
 ## 快速开始
 
 ```bash
@@ -77,7 +71,7 @@ pipeline2.py run <B站视频链接> --page N
 # 可选：--transcript <现成转写json> 跳过 ASR · --prepare-only 只准备不调 API
 ```
 
-一键环境脚本示例见主仓库分支文档；密钥通过 `ECHONOTES_SECRETS_FILE` 指向外部密码书，仓库不含任何密钥。
+密钥通过 `ECHONOTES_SECRETS_FILE` 指向外部密码书，或复制 `.env.example` 为 `.env` 填写；仓库不含任何密钥。
 
 ## 生成链路
 
