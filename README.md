@@ -6,6 +6,62 @@
 
 ![架构总览](docs/architecture.svg)
 
+## 环境准备（3 步）
+
+### 1. 系统要求
+
+| 项目 | 版本要求 | 用途 | 缺失后果 |
+|---|---|---|---|
+| Python | >= 3.10 | 全部脚本 | 无法运行 |
+| ffmpeg | 任意近期版本 | 抽音频 / 抽帧 / 转码 | ASR 与抽帧直接失败 |
+| XeLaTeX | TeX Live 2023+ / MiKTeX | 把 tex 渲染成 PDF | 只有 tex，没有 pdf |
+| 中文字体 | 思源/宋体等 CJK 字体 | 讲义中文正常显示 | PDF 中文变方块或回退字体 |
+
+### 2. 安装依赖
+
+```bash
+python -m venv .venv
+# Linux/macOS: source .venv/bin/activate
+# Windows:     .venv\Scripts\activate
+
+pip install -r requirements.txt          # 核心依赖
+pip install -r requirements-asr.txt      # 可选：本地语音转写（建议独立虚拟环境）
+```
+
+> 依赖刻意做薄：管线主体只用标准库 + 一两个轻量包；`faster-whisper` 会拖入
+> ctranslate2 等重依赖，因此单独放 `requirements-asr.txt`，装到独立 venv 后用
+> `ECHONOTES_ASR_PYTHON` 指过去，避免与主线环境互相污染。
+
+### 3. 自检（**跑管线前先跑它**）
+
+```bash
+python scripts/check_env.py
+```
+
+逐项打印 `[ OK ] / [WARN] / [FAIL]`，缺什么、去哪装、装完怎么验证一次说清；
+有必需项缺失时退出码为 1。`--ci` 只校验 Python 与 pip 依赖（给 CI 用）。
+
+### 密钥
+
+复制 `.env.example` 为 `.env` 后填写（`.env` 已被 `.gitignore` 拦截，永不入库）。
+每个 Key 用在哪、为什么选这个模型、去哪申请，见 [docs/API_SETUP.md](docs/API_SETUP.md)。
+Ech_lecture 的必需 Key：**SILICONFLOW_API_KEY**。
+
+### 常见故障速查
+
+| 症状 | 原因 | 解决 |
+|---|---|---|
+| PDF 中文乱码 / 字体回退 | TeX 环境缺 CJK 字体 | 装 TeX Live 完整版或指定可用中文字体 |
+| 视觉阶段报超时或 401 | Key 未设置或额度用尽 | 重设 SILICONFLOW_API_KEY，脚本内置 900s 超时 × 8 次重试 |
+| 退出码 1 但 PDF 已生成 | needs_human_review 的设计行为 | 检查正文末尾的待人工复核标记 |
+| xelatex 编译失败 | tex 语法或包缺失 | 看同目录 .log，或 --prepare-only 只准备不调 API |
+
+### 跑起来
+
+```bash
+python pipeline2.py run <B站课程链接> --page N
+```
+
 ## 快速开始
 
 ```bash
