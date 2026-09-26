@@ -85,7 +85,7 @@ def main() -> int:
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
-    print(f"\n=== {'Ech_lecture'} 环境自检 ===")
+    print(f"\n=== {Path(__file__).resolve().parents[1].name} 环境自检 ===")
 
     hard_fail = False
 
