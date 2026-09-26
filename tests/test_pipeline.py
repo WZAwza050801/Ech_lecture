@@ -6,8 +6,7 @@ from pathlib import Path
 from work.pipeline2.core import cached, read_json, validate_outline, write_json
 from work.pipeline2.media import Bilibili
 from work.pipeline2.pipeline2 import parser, run
-from work.pipeline2.writing import outline
-
+from work.pipeline2.writing import outline, polish
 
 class ContractTests(unittest.TestCase):
     def test_cache_invalidates_on_settings_change(self):
@@ -16,6 +15,48 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(cached(path, {"model": "a"}, lambda: 1), 1)
             self.assertEqual(cached(path, {"model": "a"}, lambda: 2), 1)
             self.assertEqual(cached(path, {"model": "b"}, lambda: 2), 2)
+
+    def test_polish_invalid_response_is_never_cached_and_retry_succeeds(self):
+        """Regression: validation used to run after caching, so a structurally
+        bad response poisoned the cache and failed on every rerun."""
+        segments = [{"id": f"s{i:06d}", "text": f"第 {i} 句。"} for i in range(3)]
+        attempts = {"n": 0}
+
+        class FlakyChat:
+            identity = {"model": "fixture", "temperature": 0.15, "extra_body": {}}
+
+            def json(self, _system, payload, images=()):
+                attempts["n"] += 1
+                if attempts["n"] == 1:
+                    return {"segments": [{"id": "s000000", "text": "坏响应：编号缺失"}]}
+                return {"segments": [{"id": s["id"], "text": s["text"]} for s in payload]}
+
+        with tempfile.TemporaryDirectory() as directory:
+            result, warnings = polish(segments, {}, FlakyChat(), Path(directory))
+            self.assertEqual([s["id"] for s in result], [s["id"] for s in segments])
+            self.assertEqual(attempts["n"], 2)
+            # The invalid response must not have been cached: a fresh run with a
+            # failing client must fail, not silently read the bad cache back.
+            class FailingChat:
+                identity = FlakyChat.identity
+                def json(self, *_a, **_k):
+                    raise AssertionError("should have been served from cache")
+            result2, _ = polish(segments, {}, FailingChat(), Path(directory))
+            self.assertEqual(len(result2), 3)
+
+    def test_polish_id_mismatch_error_reports_diagnostics(self):
+        segments = [{"id": "s000000", "text": "唯一一句。"}]
+
+        class DroppingChat:
+            identity = {"model": "fixture", "temperature": 0.15, "extra_body": {}}
+
+            def json(self, _system, payload, images=()):
+                return {"segments": []}
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ValueError) as caught:
+                polish(segments, {}, DroppingChat(), Path(directory))
+        self.assertIn("expected 1, got 0", str(caught.exception))
+        self.assertIn("missing", str(caught.exception))
 
     def test_reduce_cannot_drop_or_duplicate_blocks(self):
         blocks = [{"id": "b1"}, {"id": "b2"}]

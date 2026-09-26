@@ -95,6 +95,23 @@ export ECHONOTES_VISION_API_KEY=sk-xxx    # provider=siliconflow 时也可用 SI
 | 开放平台按量 | `https://api.moonshot.cn/v1` | 以 /models 返回为准，如 `kimi-k2.6`、`kimi-k2.7-code` | **`kimi-k3` 在按量 Key 上实测 404**；temperature 可调 |
 | Kimi Code Plan 订阅 | `https://api.kimi.com/coding/v1` | 订阅端点模型，如 `kimi-k3` | 强制 temperature=1（不可调低） |
 
+> **K2.6 思考模式注意**：K2.6 默认开启思考，思考 token 与正文**共享 max_tokens**
+> （实测一次 polish 请求约 89% 输出花在思考上）。如果日志出现
+> `finish_reason=length`，用下面配置关闭思考（非思考模式建议温度 0.6）：
+>
+> ```bash
+> export ECHONOTES_TEXT_EXTRA_BODY='{"thinking":{"type":"disabled"}}'
+> export ECHONOTES_TEXT_TEMPERATURE=0.6
+> ```
+>
+> 每个角色独立：`ECHONOTES_<角色>_EXTRA_BODY` / `_TEMPERATURE` / `_MAX_TOKENS`。
+> 生成参数已纳入缓存身份——改参数不会误复用旧参数的缓存；反之，保持默认参数时
+> 旧缓存继续有效，升级不会作废已有进度。
+>
+> **限流账号**：按量账户实测 organization RPM=3。polish 43 批连续请求会触发 429，
+> 设 `ECHONOTES_MODEL_MIN_INTERVAL=21`（秒）让管线自己限速；429 重试会遵守
+> Retry-After 响应头。
+
 - **在哪申请**：按量 https://platform.moonshot.cn ；订阅 https://www.kimi.com 。
 - **完整配置（按量示例）**：
 
@@ -165,8 +182,9 @@ curl https://api.moonshot.cn/v1/chat/completions -H "Authorization: Bearer $ECHO
 
 两步都通过、且 `ffmpeg -version` / `xelatex --version` 可用，才算配置完成。
 请求策略：默认单次超时 180 秒 × 3 次尝试，退避 10s 递增；可用
-`ECHONOTES_MODEL_TIMEOUT` / `ECHONOTES_MODEL_RETRIES` / `ECHONOTES_MODEL_BACKOFF`
-覆盖（管线启动时会打印生效值）。
+`ECHONOTES_MODEL_TIMEOUT` / `ECHONOTES_MODEL_RETRIES` / `ECHONOTES_MODEL_BACKOFF` /
+`ECHONOTES_MODEL_MIN_INTERVAL` 覆盖。管线启动时会打印生效值，**每次真实请求都会打
+一行 `[api]` 日志**（finish_reason、耗时、token 用量，不含密钥与课程内容）——排错先看它。
 
 ## 五、安全须知
 

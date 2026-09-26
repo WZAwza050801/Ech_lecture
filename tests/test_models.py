@@ -73,6 +73,50 @@ class ModelTests(unittest.TestCase):
         self.assertIn("HTTP 404", message)
         self.assertIn("Not found the model kimi-k3", message)
 
+    def test_length_finish_reason_explains_thinking_budget(self):
+        """Regression: all non-stop finish reasons used to share one vague error."""
+        class Opener:
+            def open(self, request, timeout):
+                data = {"choices": [{"finish_reason": "length", "message": {"content": ""}}],
+                        "usage": {"prompt_tokens": 765, "completion_tokens": 8192,
+                                  "completion_tokens_details": {"reasoning_tokens": 7300}}}
+                return io.BytesIO(json.dumps(data).encode())
+        with patch("urllib.request.build_opener", return_value=Opener()), \
+                patch.dict(os.environ, {"ECHONOTES_MODEL_RETRIES": "1"}, clear=True):
+            with self.assertRaises(ValueError) as caught:
+                Chat("https://example.test", "fixture", "not-a-secret", role="text").json("JSON", {})
+        message = str(caught.exception)
+        self.assertIn("finish_reason=length", message)
+        self.assertIn("thinking", message)
+        self.assertIn("ECHONOTES_TEXT_EXTRA_BODY", message)
+
+    def test_extra_body_is_sent_and_changes_cache_identity(self):
+        captured = {}
+
+        class Opener:
+            def open(self, request, timeout):
+                captured["body"] = json.loads(request.data.decode())
+                data = {"choices": [{"finish_reason": "stop", "message": {"content": '{"ok":1}'}}]}
+                return io.BytesIO(json.dumps(data).encode())
+        with patch("urllib.request.build_opener", return_value=Opener()):
+            plain = Chat("https://example.test", "fixture", "not-a-secret").json("JSON", {})
+            tuned = Chat("https://example.test", "fixture", "not-a-secret",
+                         extra_body={"thinking": {"type": "disabled"}}).json("JSON", {})
+        self.assertEqual(plain["ok"], 1)
+        self.assertEqual(captured["body"]["thinking"], {"type": "disabled"})
+        self.assertNotIn("thinking", json.dumps(Chat("https://example.test", "fixture", "k").identity))
+        self.assertIn("thinking", json.dumps(Chat("https://example.test", "fixture", "k",
+                                                 extra_body={"thinking": {"type": "disabled"}}).identity))
+
+    def test_load_chat_parses_extra_body_from_environment(self):
+        with patch.dict(os.environ, {
+                "ECHONOTES_TEXT_API_KEY": "fixture",
+                "ECHONOTES_TEXT_EXTRA_BODY": '{"thinking":{"type":"disabled"}}'}, clear=True):
+            client = load_chat("text")
+        self.assertEqual(client.extra_body, {"thinking": {"type": "disabled"}})
+        self.assertEqual(client.role, "text")
+        self.assertNotIn("fixture", repr(client))
+
 
 if __name__ == "__main__":
     unittest.main()

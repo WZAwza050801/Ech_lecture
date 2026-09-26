@@ -67,8 +67,13 @@ python scripts/check_env.py
 |---|---|---|
 | PDF 中文乱码 / 字体回退 | TeX 环境缺 CJK 字体 | 装 TeX Live 完整版或指定可用中文字体 |
 | 视觉阶段报超时或 401 | Key 未设置或额度用尽 | 重设对应 Key；请求默认 180s 超时 × 3 次尝试，可用 `ECHONOTES_MODEL_TIMEOUT` / `ECHONOTES_MODEL_RETRIES` / `ECHONOTES_MODEL_BACKOFF` 调整 |
+| `finish_reason=length` | 输出预算耗尽（思考模型会先烧掉预算） | 调大 `ECHONOTES_<角色>_MAX_TOKENS`，或关思考：`ECHONOTES_<角色>_EXTRA_BODY={"thinking":{"type":"disabled"}}` |
+| HTTP 429 | 触发服务商限流 | 设 `ECHONOTES_MODEL_MIN_INTERVAL=21`（按量 Kimi 实测 RPM=3）；429 重试遵守 Retry-After |
 | HTTP 404 / 模型不存在 | 该 Key 无此模型授权 | 先 `curl <base>/models` 看可用模型 ID，换可用模型（见 API_SETUP） |
 | 退出码 1 且打印 `[error]` | 管线异常退出 | 按错误信息排查；运行目录保留可续跑 |
+
+> 每次真实模型请求都会打印一行 `[api] model finish=... 耗时 token用量` 日志；
+> 排错先看这行，不用再猜是超时、限流还是截断。
 
 ## 快速开始
 

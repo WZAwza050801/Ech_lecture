@@ -75,6 +75,26 @@ VERIFY_PROMPT = EVIDENCE_RULES + """
 """
 
 
+def segment_id_diagnostics(expected, returned):
+    """Describe an ID mismatch without echoing course content (privacy)."""
+    expected_ids = [s["id"] for s in expected]
+    actual_ids = [s.get("id") for s in returned]
+    expected_set, actual_set = set(expected_ids), set(actual_ids)
+    missing = [i for i in expected_ids if i not in actual_set]
+    extra = [i for i in actual_ids if i not in expected_set]
+    duplicates = sorted({i for i in actual_ids if actual_ids.count(i) > 1})
+    parts = [f"expected {len(expected_ids)}, got {len(actual_ids)}"]
+    if missing:
+        parts.append(f"missing {missing[:5]}")
+    if extra:
+        parts.append(f"unexpected {extra[:5]}")
+    if duplicates:
+        parts.append(f"duplicated {duplicates[:5]}")
+    if not missing and not extra and not duplicates and expected_ids != actual_ids:
+        parts.append("IDs are correct but reordered")
+    return "; ".join(parts)
+
+
 def polish(segments, fixes, client, run):
     corrected = correct_segments(segments, fixes)
     result, warnings = [], []
@@ -85,17 +105,28 @@ def polish(segments, fixes, client, run):
         payload = [{"id": s["id"], "text": s["text"]} for s in batch]
         print(f"[polish] batch {index}/{total} ({batch[0]['id']}..{batch[-1]['id']}) start", flush=True)
         started = time.time()
+
+        def produce():
+            # Validation happens inside the cache producer so a structurally
+            # invalid response is never written to the stage cache.
+            output = client.json(POLISH_PROMPT, payload)
+            returned = output.get("segments", [])
+            if [s.get("id") for s in returned] != [s["id"] for s in batch]:
+                raise ValueError("Polish segment IDs mismatch: "
+                                 + segment_id_diagnostics(batch, returned))
+            for before, after in zip(batch, returned):
+                text = after.get("text")
+                if not isinstance(text, str) or not text.strip():
+                    raise ValueError(f"Polish returned an empty/non-string segment ({before['id']})")
+            return output
+
         output = cached(run / "cache" / f"polish-{offset:06d}.json",
                         [POLISH_PROMPT, client.identity, payload],
-                        lambda: client.json(POLISH_PROMPT, payload))
+                        lambda: retry_model(produce, attempts=3, backoff=5))
         print(f"[polish] batch {index}/{total} done in {time.time() - started:.0f}s", flush=True)
         returned = output.get("segments", [])
-        if [s.get("id") for s in returned] != [s["id"] for s in batch]:
-            raise ValueError("Polish output IDs do not match input segments")
         for before, after in zip(batch, returned):
             text = after.get("text")
-            if not isinstance(text, str) or not text.strip():
-                raise ValueError("Polish returned an empty/non-string segment")
             ratio = len(text) / max(1, len(before["text"]))
             if not .6 <= ratio <= 1.6:
                 warnings.append(f"{before['id']}: formatting drift {ratio:.2f}; kept original")
