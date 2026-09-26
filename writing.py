@@ -78,12 +78,17 @@ VERIFY_PROMPT = EVIDENCE_RULES + """
 def polish(segments, fixes, client, run):
     corrected = correct_segments(segments, fixes)
     result, warnings = [], []
-    for offset in range(0, len(corrected), 32):
+    batches = list(range(0, len(corrected), 32))
+    total = len(batches) or 1
+    for index, offset in enumerate(batches, 1):
         batch = corrected[offset:offset + 32]
         payload = [{"id": s["id"], "text": s["text"]} for s in batch]
+        print(f"[polish] batch {index}/{total} ({batch[0]['id']}..{batch[-1]['id']}) start", flush=True)
+        started = time.time()
         output = cached(run / "cache" / f"polish-{offset:06d}.json",
                         [POLISH_PROMPT, client.identity, payload],
                         lambda: client.json(POLISH_PROMPT, payload))
+        print(f"[polish] batch {index}/{total} done in {time.time() - started:.0f}s", flush=True)
         returned = output.get("segments", [])
         if [s.get("id") for s in returned] != [s["id"] for s in batch]:
             raise ValueError("Polish output IDs do not match input segments")
@@ -126,6 +131,8 @@ def map_windows(windows, vision, text, run):
                    "frames": [{"id": f["id"], "actual_t": f["actual_t"]} for f in window["frames"]]}
         images = [(f["id"], run / f["path"]) for f in window["frames"]]
         image_keys = [(f["id"], f["sha256"]) for f in window["frames"]]
+        print(f"[map] {window['id']} start ({len(window['segments'])} segments, "
+              f"{len(window['frames'])} frames)", flush=True)
         output = cached(run / "cache" / f"map-{window['id']}.json",
                         [MAP_PROMPT, client.identity, payload, image_keys],
                         lambda: retry_model(lambda: validate_map(
@@ -145,8 +152,10 @@ def map_windows(windows, vision, text, run):
 def outline(blocks, client, run):
     # Bounded reduce groups keep long courses within context. All IDs are validated.
     sections = []
-    for offset in range(0, len(blocks), 40):
+    groups = list(range(0, len(blocks), 40))
+    for index, offset in enumerate(groups, 1):
         group = blocks[offset:offset + 40]
+        print(f"[reduce] group {index}/{len(groups)} ({len(group)} blocks) start", flush=True)
         payload = [{k: b[k] for k in ("id", "kind", "title", "start", "end")} |
                    {"summary": b["text"][:800]} for b in group]
         data = cached(run / "cache" / f"reduce-{offset:05d}.json",
@@ -197,6 +206,7 @@ def verify_formulas(blocks, frames, client, run, enabled=True):
     for frame_id, formulas in by_frame.items():
         frame = frame_map[frame_id]
         payload = [{"id": f["id"], "latex": f["latex"]} for f in formulas]
+        print(f"[verify] {frame_id} ({len(formulas)} formulas) start", flush=True)
         def produce():
             data = client.json(VERIFY_PROMPT, payload, [(frame_id, run / frame["path"])])
             items = data.get("checks", [])

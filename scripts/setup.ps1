@@ -12,5 +12,8 @@ pip install -r requirements.txt
 if ($Asr) { pip install -r requirements-asr.txt }
 
 Write-Host ""
-Write-Host "依赖装好了，开始自检（缺什么会直接告诉你怎么补）："
-python scripts/check_env.py
+Write-Host "依赖装好了，先做依赖自检（API Key 属于运行期配置，留到配置后再全量自检）："
+python scripts/check_env.py --ci
+Write-Host ""
+Write-Host "下一步：按 docs/API_SETUP.md 配置 Key（填 .env 或导出环境变量），"
+Write-Host "然后运行完整自检：python scripts/check_env.py"

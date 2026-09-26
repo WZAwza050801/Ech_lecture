@@ -17,6 +17,14 @@ import os
 import shutil
 import subprocess
 import sys
+from pathlib import Path
+
+# .env 与管线入口共用同一份加载逻辑（core.load_dotenv）；本脚本能独立于包运行，
+# 这里直接把仓库根目录加入 path 后按模块名导入（core 只依赖标准库）。
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import core  # noqa: E402
+
+core.load_dotenv()
 
 # (import 名, pip 名或 None)
 PIP_REQUIRED = [('PIL', 'Pillow')]
@@ -24,10 +32,16 @@ PIP_REQUIRED = [('PIL', 'Pillow')]
 PIP_OPTIONAL = [('faster_whisper', '本地 ASR，可用 --transcript 复用现成转写跳过')]
 # (命令, 是否必需, 安装提示)
 SYS_TOOLS = [('ffmpeg', True, 'apt install ffmpeg / winget install Gyan.FFmpeg / brew install ffmpeg'), ('xelatex', True, 'apt install texlive-xetex texlive-lang-chinese / 安装 MiKTeX 或 TeX Live')]
-# (环境变量, 是否必需, 用途)
-ENV_KEYS = [('SILICONFLOW_API_KEY', True, '视觉理解（Qwen3-VL），管线二唯一必需 Key'), ('ECHONOTES_SECRETS_FILE', False, '规划/写作 Key 的密码书路径，不配则需 planner/writer 环境变量')]
+# (环境变量, 是否必需, 用途)。run 主流程实际读取的角色是 TEXT 与 VISION；
+# 单独设置 SILICONFLOW_API_KEY 不足以运行（见 docs/API_SETUP.md 的角色说明）。
+ENV_KEYS = [
+    ('ECHONOTES_TEXT_API_KEY', True, '转写整理/reduce（run 主流程必需）'),
+    ('ECHONOTES_VISION_API_KEY', True, '窗口 map 与公式复查（run 主流程必需）'),
+    ('ECHONOTES_SECRETS_FILE', False, '密码书路径；设置了它可替代上面两个变量'),
+    ('SILICONFLOW_API_KEY', False, '仅当 ECHONOTES_VISION_PROVIDER=siliconflow 时作为视觉 Key；单独设置不足以运行'),
+]
 
-MIN_PYTHON = (3, 10)
+MIN_PYTHON = (3, 11)
 
 OK, WARN, BAD = "[ OK ]", "[WARN]", "[FAIL]"
 
@@ -101,12 +115,16 @@ def main() -> int:
                 hard_fail |= required
 
         print("-- API 密钥 -------------------------------")
+        secrets_configured = bool(os.environ.get("ECHONOTES_SECRETS_FILE"))
         for key, required, why in ENV_KEYS:
             val = os.environ.get(key)
-            if val:
-                print(f"{OK} {key:<22}: 已设置（{len(val)} 字符，不回显）")
+            # 角色变量（TEXT/VISION）在密码书已配置时视为满足
+            satisfied = bool(val) or (secrets_configured and key.endswith("_API_KEY"))
+            if satisfied:
+                detail = f"已设置（{len(val)} 字符，不回显）" if val else "由 ECHONOTES_SECRETS_FILE 提供"
+                print(f"{OK} {key:<24}: {detail}")
             else:
-                print(f"{BAD if required else WARN} {key:<22}: 未设置（{why}）")
+                print(f"{BAD if required else WARN} {key:<24}: 未设置（{why}）")
                 hard_fail |= required
 
     print("-" * 48)

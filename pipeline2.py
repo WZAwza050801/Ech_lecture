@@ -13,11 +13,14 @@ import subprocess
 import sys
 
 if __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-    __package__ = "work.pipeline2"
+    # Direct execution (python pipeline2.py ...). In this repo the file lives at
+    # the package root, so the containing package is named after the clone
+    # directory itself — any clone folder name works, not just work/pipeline2.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    __package__ = Path(__file__).resolve().parent.name
 
-from .core import (align_windows, cached, digest, normalize_segments, read_json,
-                   write_json, correct_segments)
+from .core import (align_windows, cached, digest, load_dotenv, normalize_segments,
+                   read_json, write_json, correct_segments)
 from .distill import package, repackage
 from .media import Bilibili, extract_frames, make_wav, probe
 from .models import load_chat
@@ -124,6 +127,10 @@ def run(args, clients=None):
             print(f"[prepared] {run_dir}", flush=True)
             return run_dir
         text, vision = clients or (load_chat("text", args.secrets), load_chat("vision", args.secrets))
+        print(f"[model] text={text.identity['model']} vision={vision.identity['model']} "
+              f"timeout={os.getenv('ECHONOTES_MODEL_TIMEOUT', '180')}s/attempt "
+              f"retries={os.getenv('ECHONOTES_MODEL_RETRIES', '3')} "
+              f"backoff={os.getenv('ECHONOTES_MODEL_BACKOFF', '10')}s", flush=True)
         fixes = read_json(args.terms).get("fixes", {}) if args.terms else {}
         if args.no_polish:
             segments, warnings = correct_segments(segments, fixes), []
@@ -196,6 +203,7 @@ def parser():
 
 
 def main():
+    load_dotenv()
     args = parser().parse_args()
     if args.command == "doctor":
         print(json.dumps({"executables": {x: bool(shutil.which(x)) for x in ("ffmpeg", "ffprobe", "xelatex")},

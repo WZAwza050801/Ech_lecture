@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
@@ -43,6 +44,34 @@ class ModelTests(unittest.TestCase):
         for raw in [r'{"latex":"\frac{x}{y}"}', r'{"latex":"\nabla f"}', r'{"symbol":"\theta"}']:
             with self.assertRaises(ValueError):
                 check_json_strings(json.loads(raw))
+
+    def test_network_timeout_reports_original_error_not_unbound_local(self):
+        """Regression: the OSError/TimeoutError handler used {error} without binding it."""
+        class Opener:
+            def open(self, request, timeout):
+                raise TimeoutError("The read operation timed out")
+        with patch("urllib.request.build_opener", return_value=Opener()), \
+                patch.dict(os.environ, {"ECHONOTES_MODEL_RETRIES": "1"}, clear=True):
+            with self.assertRaises(RuntimeError) as caught:
+                Chat("https://example.test", "fixture", "not-a-secret").json("JSON", {})
+        message = str(caught.exception)
+        self.assertIn("The read operation timed out", message)
+        self.assertIn("ECHONOTES_MODEL_TIMEOUT", message)
+
+    def test_http_error_keeps_truncated_provider_message(self):
+        """Regression: the HTTPError handler dropped the server error body."""
+        class Opener:
+            def open(self, request, timeout):
+                body = json.dumps({"error": {"message": "Not found the model kimi-k3 or Permission denied"}})
+                raise urllib.error.HTTPError("https://example.test", 404, "Not Found", {},
+                                             io.BytesIO(body.encode()))
+        with patch("urllib.request.build_opener", return_value=Opener()), \
+                patch.dict(os.environ, {"ECHONOTES_MODEL_RETRIES": "2"}, clear=True):
+            with self.assertRaises(RuntimeError) as caught:
+                Chat("https://example.test", "fixture", "not-a-secret").json("JSON", {})
+        message = str(caught.exception)
+        self.assertIn("HTTP 404", message)
+        self.assertIn("Not found the model kimi-k3", message)
 
 
 if __name__ == "__main__":

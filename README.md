@@ -12,17 +12,21 @@
 
 | 项目 | 版本要求 | 用途 | 缺失后果 |
 |---|---|---|---|
-| Python | >= 3.10 | 全部脚本 | 无法运行 |
+| Python | >= 3.11 | 全部脚本 | 无法运行 |
 | ffmpeg | 任意近期版本 | 抽音频 / 抽帧 / 转码 | ASR 与抽帧直接失败 |
 | XeLaTeX | TeX Live 2023+ / MiKTeX | 把 tex 渲染成 PDF | 只有 tex，没有 pdf |
 | 中文字体 | 思源/宋体等 CJK 字体 | 讲义中文正常显示 | PDF 中文变方块或回退字体 |
 
+> macOS 注意：系统通常只有 `python3` 没有 `python` 命令。先 `python3 --version` 确认
+> >= 3.11（旧系统可能是 3.9，需另装新版），再统一用 `python3` 建环境。
+
 ### 2. 安装依赖
 
 ```bash
-python -m venv .venv
-# Linux/macOS: source .venv/bin/activate
-# Windows:     .venv\Scripts\activate
+python3 -m venv .venv
+source .venv/bin/activate        # Linux/macOS
+# .venv\Scripts\activate         # Windows PowerShell
+python --version                 # 确认激活后用的是新解释器
 
 pip install -r requirements.txt          # 核心依赖
 pip install -r requirements-asr.txt      # 可选：本地语音转写（建议独立虚拟环境）
@@ -51,27 +55,35 @@ python scripts/check_env.py
 
 ### 密钥
 
-复制 `.env.example` 为 `.env` 后填写（`.env` 已被 `.gitignore` 拦截，永不入库）。
-每个 Key 用在哪、为什么选这个模型、去哪申请，见 [docs/API_SETUP.md](docs/API_SETUP.md)。
-Ech_lecture 的必需 Key：**SILICONFLOW_API_KEY**。
+复制 `.env.example` 为 `.env` 后填写（启动时自动加载，`.env` 已被 `.gitignore` 拦截，永不入库）。
+`run` 主流程必需 **TEXT 与 VISION 两个角色** 的 Key（`ECHONOTES_TEXT_API_KEY` /
+`ECHONOTES_VISION_API_KEY`，或通过 `ECHONOTES_SECRETS_FILE` 密码书提供）；`study` 阶段
+另需 `planner`/`writer`。每个 Key 用在哪、为什么选这个模型、去哪申请，见
+[docs/API_SETUP.md](docs/API_SETUP.md)。
 
 ### 常见故障速查
 
 | 症状 | 原因 | 解决 |
 |---|---|---|
 | PDF 中文乱码 / 字体回退 | TeX 环境缺 CJK 字体 | 装 TeX Live 完整版或指定可用中文字体 |
-| 视觉阶段报超时或 401 | Key 未设置或额度用尽 | 重设 SILICONFLOW_API_KEY，脚本内置 900s 超时 × 8 次重试 |
-| 退出码 1 但 PDF 已生成 | needs_human_review 的设计行为 | 检查正文末尾的待人工复核标记 |
-| xelatex 编译失败 | tex 语法或包缺失 | 看同目录 .log，或 --prepare-only 只准备不调 API |
+| 视觉阶段报超时或 401 | Key 未设置或额度用尽 | 重设对应 Key；请求默认 180s 超时 × 3 次尝试，可用 `ECHONOTES_MODEL_TIMEOUT` / `ECHONOTES_MODEL_RETRIES` / `ECHONOTES_MODEL_BACKOFF` 调整 |
+| HTTP 404 / 模型不存在 | 该 Key 无此模型授权 | 先 `curl <base>/models` 看可用模型 ID，换可用模型（见 API_SETUP） |
+| 退出码 1 且打印 `[error]` | 管线异常退出 | 按错误信息排查；运行目录保留可续跑 |
 
 ## 快速开始
 
 ```bash
-pipeline2.py run <B站视频链接> --page N
-# 可选：--transcript <现成转写json> 跳过 ASR · --prepare-only 只准备不调 API
+# 在仓库根目录执行；`python pipeline2.py` 直接可用，无需安装到 PATH
+python pipeline2.py run <B站视频链接或BV号> --page N
+# 可选：--transcript <现成转写json> 跳过 ASR · --prepare-only 只准备不调 API · --keep-cache 保留运行缓存
 ```
 
-密钥通过 `ECHONOTES_SECRETS_FILE` 指向外部密码书，或复制 `.env.example` 为 `.env` 填写；仓库不含任何密钥。
+**两阶段流程**：`run` 产出基础证据讲义（`lecture.json` + PDF）后，`study` 再把它
+重写为学习讲义（出版版 + 卡片版 + 概念地图）。两阶段的模型角色不同，见
+[API_SETUP](docs/API_SETUP.md) 的"角色 × 入口"矩阵。
+
+密钥通过 `ECHONOTES_SECRETS_FILE` 指向外部密码书，或复制 `.env.example` 为 `.env` 填写
+（管线启动时会自动加载 `.env`，无需手动 export）；仓库不含任何密钥。
 
 ## 生成链路
 
@@ -84,23 +96,32 @@ pipeline2.py run <B站视频链接> --page N
 | 音视频直取 | playurl API + 完整浏览器头 | api.bilibili.com（防 412） |
 | 本地转写 | faster-whisper small/int8 | 本地模型，零成本 |
 | 场景+均匀抽帧 | ffmpeg + dHash 去重 | 保留真实 PTS |
-| 窗口 map | 每窗 ≤8 帧 + 窗内转写 | 百炼 qwen3.8-max（Plan 配额） |
-| 写作/审校 | reduce 编排 | Kimi kimi-k3（Code Plan 配额） |
-| 公式原帧复查 | 回原 PTS 二次问视觉 | SiliconFlow Qwen3-VL-32B |
+| 转写整理 polish | 只整格式不改内容 | `text` 角色（默认 DeepSeek，可配 Kimi 等） |
+| 窗口 map | 每窗 ≤8 帧 + 窗内转写 | `vision` 角色（Qwen3-VL）；纯口述窗口自动切 `text` |
+| reduce 目录编排 | 只编排不重写知识块 | `text` 角色 |
+| 公式原帧复查 | 回原 PTS 二次问视觉 | `vision` 角色（SiliconFlow Qwen3-VL） |
 | LaTeX 渲染 | 两遍 XeLaTeX（交叉引用） | TeX Live |
+| study 学习讲义 | 四道工序 + 概念地图 | `planner`（百炼）+ `writer`（Kimi）角色 |
+
+> `run` 只使用 `text` 和 `vision` 两个角色；`planner`/`writer` 仅在 `study` 阶段读取。
+> 每个角色的 provider / base_url / model 都可用 `ECHONOTES_<角色>_*` 环境变量覆盖，
+> 配置矩阵见 [API_SETUP.md](docs/API_SETUP.md)。
 
 ## 产物结构
 
 ```
-归档\课程讲义-<标题>-<日期>-BV-P<号>-<hash>\
-├── lecture.tex / lecture.pdf   # 成品（Godot VFX 课实测 1.5~8.9MB / 36~240 图）
-├── transcript.json             # 带时间戳转写（供下游复用）
-├── quality.json                # 质量报告（覆盖缺口/符号冲突/复查结论）
-└── frames\                     # 抽帧证据
+output/课程讲义/<BV号-P页-课程名>/        # --output-root 可改输出位置
+├── lecture.pdf / lecture.tex    # 成品（重编译需同目录 frames/）
+├── lecture.json                 # 全证据链（transcript/blocks/quality 都在里面）
+├── frames\                      # 抽帧证据（去重）
+└── README.md                    # 来源、统计、模型配置
 ```
 
-**退出码语义**：`exit=0` 完美收尾；`exit=1` 且已打印 `[done]` = `needs_human_review`
-（PDF 已产出，属设计行为非失败）。
+成功后运行缓存自动清理；`--keep-cache` 保留（调试或续跑 `study` 用）。
+
+**退出码语义**：`exit=0` 成功收尾（质量报告中的 `needs_human_review` 是设计行为——
+引用覆盖率不等于内容覆盖率，正式使用前请复核原视频）；异常退出为 `exit=1` 并打印
+`[error]`。
 
 ## 已验收课程
 
@@ -117,3 +138,10 @@ pipeline2.py run <B站视频链接> --page N
 ## API 配置
 
 本仓库用到哪些 Key、为什么选这些模型、在哪申请、怎么自检——见 [docs/API_SETUP.md](docs/API_SETUP.md)。密钥永不入库。
+
+## 测试
+
+```bash
+python run_tests.py          # 无需 pytest
+# 或：pip install pytest && pytest tests/
+```

@@ -66,11 +66,19 @@ class Chat:
                         "Return only the corrected JSON object.",
                         {"invalid_json": raw}, _repair=True)
             except urllib.error.HTTPError as error:
+                detail = ""
+                try:
+                    detail = error.read().decode("utf-8", "replace")[:300].strip()
+                except Exception:
+                    pass
                 if error.code not in {429, 500, 502, 503, 504} or attempt == retries - 1:
-                    raise RuntimeError(f"Model HTTP {error.code} ({self.model}); inspect provider/model configuration") from None
-            except (OSError, TimeoutError):
+                    suffix = f"; provider said: {detail}" if detail else ""
+                    raise RuntimeError(f"Model HTTP {error.code} ({self.model}) after {attempt + 1} attempt(s){suffix}") from None
+            except (OSError, TimeoutError) as error:
                 if attempt == retries - 1:
-                    raise RuntimeError(f"Model network request failed: {error}") from None
+                    raise RuntimeError(f"Model network request failed after {attempt + 1} attempt(s) "
+                                       f"(timeout={timeout}s per attempt, retries={retries}, "
+                                       f"tune ECHONOTES_MODEL_TIMEOUT/RETRIES/BACKOFF): {error}") from None
             time.sleep(backoff * (attempt + 1))
 
 

@@ -2,7 +2,28 @@
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
+
+
+def load_dotenv(path=None):
+    """Load KEY=VALUE lines from .env into os.environ (existing values win).
+
+    Lets users configure keys by filling .env as the README promises, without
+    exporting anything. Never overrides variables already set in the shell.
+    """
+    path = Path(path) if path else Path(__file__).resolve().parent / ".env"
+    if not path.exists():
+        return False
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+    return True
 
 
 def read_json(path):
