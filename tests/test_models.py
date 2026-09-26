@@ -117,6 +117,49 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(client.role, "text")
         self.assertNotIn("fixture", repr(client))
 
+    def test_extra_body_cannot_override_reserved_request_keys(self):
+        """Regression: extra_body was merged raw, so {"model": ...} desynced the
+        actual request from the recorded cache identity (cache poisoning), and
+        {"stream": true} broke response parsing outright."""
+        with self.assertRaises(ValueError) as caught:
+            Chat("https://example.test", "fixture", "k", role="text",
+                 extra_body={"model": "other-model", "stream": True})
+        message = str(caught.exception)
+        self.assertIn("ECHONOTES_TEXT_EXTRA_BODY", message)
+        self.assertIn("model", message)
+        with patch.dict(os.environ, {
+                "ECHONOTES_TEXT_API_KEY": "fixture",
+                "ECHONOTES_TEXT_EXTRA_BODY": '{"temperature": 0.9}'}, clear=True):
+            with self.assertRaises(ValueError) as caught_env:
+                load_chat("text")
+        self.assertIn("temperature", str(caught_env.exception))
+
+    def test_extra_body_invalid_json_names_the_environment_variable(self):
+        """Regression: a malformed EXTRA_BODY used to surface as a bare
+        JSONDecodeError with no hint which of the four role variables broke."""
+        with patch.dict(os.environ, {
+                "ECHONOTES_VISION_API_KEY": "fixture",
+                "ECHONOTES_VISION_EXTRA_BODY": "not json"}, clear=True):
+            with self.assertRaises(ValueError) as caught:
+                load_chat("vision")
+        self.assertIn("ECHONOTES_VISION_EXTRA_BODY", str(caught.exception))
+
+    def test_persistent_throttle_clock_survives_process_restart(self):
+        """Regression: the MIN_INTERVAL clock lived in process memory, so the
+        real-world "restart after a 429" flow fired the next request instantly,
+        straight into the rate-limit window. The clock now persists to disk."""
+        with tempfile.TemporaryDirectory() as directory:
+            clock = Path(directory) / ".request-clock.json"
+            sleeps = []
+            with patch("time.sleep", side_effect=lambda seconds: sleeps.append(seconds)):
+                Chat("https://example.test", "fixture", "k", clock_path=clock)._pace(21)
+                self.assertEqual(sleeps, [])  # First ever request: nothing to wait for.
+                # A "new process" (fresh instance) sharing the clock file must wait.
+                Chat("https://example.test", "fixture", "k", clock_path=clock)._pace(21)
+            self.assertEqual(len(sleeps), 1)
+            self.assertGreater(sleeps[0], 20)
+            self.assertLessEqual(sleeps[0], 21)
+
 
 if __name__ == "__main__":
     unittest.main()

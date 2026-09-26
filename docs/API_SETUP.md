@@ -105,12 +105,19 @@ export ECHONOTES_VISION_API_KEY=sk-xxx    # provider=siliconflow 时也可用 SI
 > ```
 >
 > 每个角色独立：`ECHONOTES_<角色>_EXTRA_BODY` / `_TEMPERATURE` / `_MAX_TOKENS`。
-> 生成参数已纳入缓存身份——改参数不会误复用旧参数的缓存；反之，保持默认参数时
-> 旧缓存继续有效，升级不会作废已有进度。
+> `EXTRA_BODY` 是 provider 私有参数的逃生舱，**不得覆盖保留键** `model` / `messages` /
+> `stream` / `response_format` / `temperature` / `max_tokens`（覆盖会让实际请求与缓存身份
+> 脱节或直接打挂响应解析，启动时即报错拒绝并指明变量名）。
+> 生成参数已纳入缓存身份——改参数不会误复用旧参数的缓存。**缓存迁移规则**：早期版本
+> 不把 temperature/extra_body 计入缓存身份，因此曾设过非默认 `_TEMPERATURE` / `_EXTRA_BODY`
+> 的用户升级后旧缓存会失配重打（一次性成本，属预期行为）；从未改过这两项的用户
+> 旧缓存继续命中。
 >
 > **限流账号**：按量账户实测 organization RPM=3。polish 43 批连续请求会触发 429，
 > 设 `ECHONOTES_MODEL_MIN_INTERVAL=21`（秒）让管线自己限速；429 重试会遵守
-> Retry-After 响应头。
+> Retry-After 响应头。节流时钟落盘到运行目录（`cache/.request-clock.json`），
+> 手动重启续跑时仍会计时。注意它是**按运行目录**的节流：N 个并行 run 进程合计
+> RPM 约乘 N——限流账号并行跑多门课时请把间隔加倍或错峰。
 
 - **在哪申请**：按量 https://platform.moonshot.cn ；订阅 https://www.kimi.com 。
 - **完整配置（按量示例）**：

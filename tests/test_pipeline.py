@@ -1,12 +1,16 @@
 """Real ffmpeg/XeLaTeX integration, with an explicitly fake model boundary."""
+import contextlib
+import io
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from work.pipeline2.core import cached, read_json, validate_outline, write_json
 from work.pipeline2.media import Bilibili
+from work.pipeline2.models import DeterministicModelError
 from work.pipeline2.pipeline2 import parser, run
-from work.pipeline2.writing import outline, polish
+from work.pipeline2.writing import outline, polish, retry_model
 
 class ContractTests(unittest.TestCase):
     def test_cache_invalidates_on_settings_change(self):
@@ -63,6 +67,95 @@ class ContractTests(unittest.TestCase):
         for ids in [["b1"], ["b1", "b2", "b1"], ["b1", "invented"]]:
             with self.assertRaises(ValueError):
                 validate_outline({"sections": [{"title": "标题", "block_ids": ids}]}, blocks)
+
+    def test_reduce_group_retries_schema_failures(self):
+        """Regression: reduce groups had no bounded retry (unlike polish/map),
+        so one malformed outline killed the whole run."""
+        blocks = [{"id": f"b{i}", "kind": "explanation", "title": f"主题 {i}",
+                   "start": i, "end": i + 1, "text": "摘要"} for i in range(3)]
+        calls = {"group": 0}
+
+        class FlakyReduceChat:
+            identity = {"model": "fixture"}
+
+            def json(self, _system, payload, images=()):
+                if isinstance(payload, list):
+                    calls["group"] += 1
+                    if calls["group"] == 1:
+                        return {"sections": [{"title": "坏目录", "block_ids": ["b0"]}]}
+                    return {"sections": [{"title": "全部",
+                                          "block_ids": [b["id"] for b in payload]}]}
+                return {"sections": payload["candidate_sections"]}
+
+        with tempfile.TemporaryDirectory() as directory, \
+                patch("work.pipeline2.writing.time.sleep"):
+            result = outline(blocks, FlakyReduceChat(), Path(directory))
+        self.assertEqual(calls["group"], 2)
+        self.assertEqual(result["sections"],
+                         [{"title": "全部", "block_ids": ["b0", "b1", "b2"]}])
+
+    def test_reduce_group_deterministic_failure_is_not_retried(self):
+        """finish_reason=length/content_filter cannot be fixed by retrying;
+        the group must fail fast instead of burning 3x max_tokens."""
+        blocks = [{"id": "b0", "kind": "explanation", "title": "t",
+                   "start": 0, "end": 1, "text": "摘要"}]
+        calls = {"n": 0}
+
+        class TruncatedChat:
+            identity = {"model": "fixture"}
+
+            def json(self, *_args, **_kwargs):
+                calls["n"] += 1
+                raise DeterministicModelError("finish_reason=length")
+
+        sleeps = []
+        with tempfile.TemporaryDirectory() as directory, \
+                patch("work.pipeline2.writing.time.sleep",
+                      side_effect=lambda seconds: sleeps.append(seconds)), \
+                self.assertRaises(DeterministicModelError):
+            outline(blocks, TruncatedChat(), Path(directory))
+        self.assertEqual(calls["n"], 1)
+        self.assertEqual(sleeps, [])
+
+    def test_retry_model_logs_every_attempt_and_sleeps_only_between_attempts(self):
+        """Regression: retry_model swallowed the first two failures silently and
+        slept even after the final attempt (43 dead batches = 10 minutes of
+        pure waiting before the error surfaced)."""
+        sleeps = []
+        failures = {"n": 0}
+
+        def twice_bad():
+            failures["n"] += 1
+            if failures["n"] < 3:
+                raise ValueError(f"schema issue {failures['n']}")
+            return "ok"
+
+        output = io.StringIO()
+        with patch("work.pipeline2.writing.time.sleep",
+                   side_effect=lambda seconds: sleeps.append(seconds)), \
+                contextlib.redirect_stdout(output):
+            self.assertEqual(retry_model(twice_bad, attempts=3, backoff=5, label="fixture"), "ok")
+        self.assertEqual(sleeps, [5, 10])
+        self.assertEqual(output.getvalue().count("[retry] fixture attempt"), 2)
+        self.assertIn("schema issue 1", output.getvalue())
+        self.assertIn("schema issue 2", output.getvalue())
+
+        # All attempts fail: every attempt is logged, the last error is raised,
+        # and there is no pointless sleep after the final failure.
+        sleeps.clear()
+        output = io.StringIO()
+
+        def always_bad():
+            raise ValueError("always bad")
+
+        with patch("work.pipeline2.writing.time.sleep",
+                   side_effect=lambda seconds: sleeps.append(seconds)), \
+                contextlib.redirect_stdout(output):
+            with self.assertRaises(ValueError) as caught:
+                retry_model(always_bad, attempts=3, backoff=5, label="fixture")
+        self.assertEqual(sleeps, [5, 10])
+        self.assertEqual(output.getvalue().count("[retry] fixture attempt"), 3)
+        self.assertIn("always bad", str(caught.exception))
 
     def test_final_reduce_repairs_singleton_sections(self):
         blocks = [

@@ -68,7 +68,7 @@ python scripts/check_env.py
 | PDF 中文乱码 / 字体回退 | TeX 环境缺 CJK 字体 | 装 TeX Live 完整版或指定可用中文字体 |
 | 视觉阶段报超时或 401 | Key 未设置或额度用尽 | 重设对应 Key；请求默认 180s 超时 × 3 次尝试，可用 `ECHONOTES_MODEL_TIMEOUT` / `ECHONOTES_MODEL_RETRIES` / `ECHONOTES_MODEL_BACKOFF` 调整 |
 | `finish_reason=length` | 输出预算耗尽（思考模型会先烧掉预算） | 调大 `ECHONOTES_<角色>_MAX_TOKENS`，或关思考：`ECHONOTES_<角色>_EXTRA_BODY={"thinking":{"type":"disabled"}}` |
-| HTTP 429 | 触发服务商限流 | 设 `ECHONOTES_MODEL_MIN_INTERVAL=21`（按量 Kimi 实测 RPM=3）；429 重试遵守 Retry-After |
+| HTTP 429 | 触发服务商限流 | 设 `ECHONOTES_MODEL_MIN_INTERVAL=21`（按量 Kimi 实测 RPM=3）；429 重试遵守 Retry-After；节流时钟落盘到运行目录，重启续跑仍计时 |
 | HTTP 404 / 模型不存在 | 该 Key 无此模型授权 | 先 `curl <base>/models` 看可用模型 ID，换可用模型（见 API_SETUP） |
 | 退出码 1 且打印 `[error]` | 管线异常退出 | 按错误信息排查；运行目录保留可续跑 |
 
@@ -124,6 +124,11 @@ output/课程讲义/<BV号-P页-课程名>/        # --output-root 可改输出�
 
 成功后运行缓存自动清理；`--keep-cache` 保留（调试或续跑 `study` 用）。
 
+**缓存迁移规则**：阶段缓存按"模型 + base_url + max_tokens + 非默认 temperature/extra_body"
+生成身份指纹。曾设过非默认 `ECHONOTES_<角色>_TEMPERATURE` / `_EXTRA_BODY` 的用户，
+升级到计入这些字段的版本后旧缓存会失配重打（一次性成本，属预期行为）；
+从未改过这两项的用户旧缓存继续命中，升级不作废已有进度。
+
 **退出码语义**：`exit=0` 成功收尾（质量报告中的 `needs_human_review` 是设计行为——
 引用覆盖率不等于内容覆盖率，正式使用前请复核原视频）；异常退出为 `exit=1` 并打印
 `[error]`。
@@ -133,6 +138,9 @@ output/课程讲义/<BV号-P页-课程名>/        # --output-root 可改输出�
 - 李群李代数（从机器人应用的角度）P1
 - 机器人学：运动学与动力学（Kevin Wood 中文配音）P2
 - Godot 游戏特效｜入门至进阶实战课 8 个实操P（2026-09 批量，2 lane 并行 6 小时收官）
+
+> 并行注意：`MIN_INTERVAL` 节流按运行目录各自计时，N 个并行进程合计 RPM 约乘 N；
+> 限流严格的账号并行跑多门课时请把间隔加倍或错峰。
 
 ## 合并-分叉架构
 

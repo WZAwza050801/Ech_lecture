@@ -23,7 +23,7 @@ from .core import (align_windows, cached, digest, load_dotenv, normalize_segment
                    read_json, write_json, correct_segments)
 from .distill import package, repackage
 from .media import Bilibili, extract_frames, make_wav, probe
-from .models import load_chat
+from .models import Chat, load_chat
 from .render import compile_pdf, render
 from .writing import map_windows, outline, polish, quality_report, verify_formulas
 
@@ -127,6 +127,11 @@ def run(args, clients=None):
             print(f"[prepared] {run_dir}", flush=True)
             return run_dir
         text, vision = clients or (load_chat("text", args.secrets), load_chat("vision", args.secrets))
+        # Persist the throttle clock into the run directory so a restarted
+        # process keeps honoring MIN_INTERVAL (file-clock semantics).
+        for client in (text, vision):
+            if isinstance(client, Chat):
+                client.clock_path = run_dir / "cache" / ".request-clock.json"
         print(f"[model] text={text.identity['model']} vision={vision.identity['model']} "
               f"timeout={os.getenv('ECHONOTES_MODEL_TIMEOUT', '180')}s/attempt "
               f"retries={os.getenv('ECHONOTES_MODEL_RETRIES', '3')} "
